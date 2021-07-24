@@ -1,0 +1,122 @@
+import pandas as pd
+import numpy as np
+
+def csv(filename):
+	return pd.read_csv("data/"+filename+'.csv')
+
+train_X,test_X,train_y = csv('X_train'),csv('X_test'),csv('y_train')
+
+X = pd.concat([train_X,test_X])
+
+X = X.fillna(0)
+print(X.columns)
+X["총구매액"] = X["총구매액"].map(lambda x: 0 if x < 0 else x)
+X["최대구매액"] = X["최대구매액"].map(lambda x: 0 if x < 0 else x)
+
+print(train_X.shape)
+
+from sklearn.preprocessing import MinMaxScaler
+#from sklearn.preprocessing import StandardScaler
+scaler = MinMaxScaler()
+#scaler = StandardScaler()
+scale_columns = ["총구매액","최대구매액","환불금액","내점일수","내점당구매건수","주말방문비율","구매주기"]
+X[scale_columns] = scaler.fit_transform(X[scale_columns])
+
+new_train_X = pd.get_dummies(X,drop_first=True)
+
+new_train_X = new_train_X.drop("cust_id",axis=1)
+
+print(new_train_X.shape)
+
+from sklearn.model_selection import train_test_split
+X_train,X_test,y_train,y_test = train_test_split(new_train_X[:3500],train_y["gender"],test_size=0.2,
+																								 random_state=42,stratify=train_y["gender"])
+print(X_train.shape,X_test.shape,y_train.shape,y_test.shape)
+
+from sklearn.ensemble import RandomForestClassifier
+# from skelarn.ensemble import RandomForestRegressor
+from sklearn.model_selection import GridSearchCV
+# params = {
+# 	'n_estimators' : [100],
+# 	'max_depth' : [4,6,8,10],
+# 	'min_samples_leaf' : [4,6,8,10],
+# 	'min_samples_split' : [2,4,6]
+# }
+# rnd_clf = RandomForestClassifier(random_state=42)
+# grid_cv = GridSearchCV(rnd_clf, param_grid=params, cv=3, n_jobs=-1)
+# grid_cv.fit(X_train,y_train)
+# print(grid_cv.best_params_)
+
+rf = RandomForestClassifier(n_estimators=100,max_depth=10,min_samples_leaf=4,min_samples_split=2,random_state=42)
+# rf.fit(X_train,y_train)
+# rf_pred = rf.predict_proba(X_test)
+
+from sklearn.metrics import roc_auc_score
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import recall_score
+# rf_score = roc_auc_score(y_test,rf_pred[:,1])
+
+# print(rf_score)
+
+# import xgboost
+# xgb_clf = xgboost.XGBClassifier(random_state=42)
+# xgb_clf.fit(X_train,y_train)
+# xgb_pred = xgb_clf.predict_proba(X_test)
+# score = roc_auc_score(y_test,xgb_pred[:,1])
+# print(score)
+
+from sklearn.svm import SVC
+# svc_clf = SVC(kernel="linear",random_state=42,probability=True)
+# params = {
+# 	'C' : [0.01,0.1,1]
+# }
+# grid_cv = GridSearchCV(svc_clf,param_grid=params,cv=3,n_jobs=-1)
+# grid_cv.fit(X_train,y_train)
+# print(grid_cv.best_params_)
+
+
+svc_clf = SVC(kernel="linear",C=0.01,random_state=42,probability=True)
+# svc_clf.fit(X_train,y_train)
+# svc_pred = svc_clf.predict_proba(X_test)
+# score = roc_auc_score(y_test,svc_pred[:,1])
+# print(score)
+
+from sklearn.linear_model import LogisticRegression
+ln_clf = LogisticRegression()
+# # ln_clf.fit(X_train,y_train)
+# # ln_pred = ln_clf.predict_proba(X_test)
+# # score = roc_auc_score(y_test,ln_pred[:,1])
+# # print(score)
+
+from sklearn.ensemble import VotingClassifier
+
+vot_clf = VotingClassifier(estimators=[('lr',ln_clf),('rf',rf),('svc',svc_clf)], voting='soft')
+vot_clf.fit(X_train,y_train)
+vot_pred = vot_clf.predict_proba(X_test)
+score = roc_auc_score(y_test, vot_pred[:,1])
+print(score)
+
+from sklearn.model_selection import StratifiedKFold
+stf = StratifiedKFold(n_splits=5)
+KFscore = []
+KFpred = []
+
+for tr_index,te_index in stf.split(new_train_X[:3500],train_y["gender"]):
+	new_X_train,new_X_test = new_train_X.iloc[tr_index,:] , new_train_X.iloc[te_index,:]
+	new_y_train,new_y_test = train_y["gender"][tr_index], train_y["gender"][te_index]
+	vot_clf.fit(new_X_train,new_y_train)
+	pred = vot_clf.predict_proba(new_X_test)
+	score = roc_auc_score(new_y_test,pred[:,1])
+	KFpred.append(pred[:,1])
+	KFscore.append(score)
+	
+print(np.asarray(KFscore).mean())
+
+# # pred = vot_clf.predict_proba(new_train_X[3500:])
+
+pred = vot_clf.predict_proba(new_train_X[3500:])[:,1]
+result = pd.DataFrame()
+result["cust_id"] = test_X["cust_id"]
+result["gender"] = pred.round(3)
+print(result)
+result.to_csv("수험번호.csv",index=False)
